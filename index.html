@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPO GMP Formatter</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0d1117; color: #e6edf3;
+  }
+  .wrap { max-width: 1200px; margin: auto; }
+  h1 { margin: 0 0 8px; font-size: 28px; }
+  .sub { color: #8b949e; margin-bottom: 22px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 14px; padding: 18px;
+  }
+  .full { grid-column: 1 / -1; }
+  label { display: block; font-weight: 700; margin-bottom: 8px; }
+  textarea {
+    width: 100%; min-height: 280px; resize: vertical;
+    background: #0d1117; color: #e6edf3;
+    border: 1px solid #30363d; border-radius: 10px;
+    padding: 13px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    outline: none;
+  }
+  textarea:focus { border-color: #58a6ff; box-shadow: 0 0 0 2px rgba(88,166,255,.15); }
+  .small textarea { min-height: 170px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .controls label { margin: 0; font-weight: 500; }
+  input[type=checkbox] { accent-color: #58a6ff; }
+  button {
+    border: 0; border-radius: 9px; padding: 11px 16px;
+    background: #238636; color: white; font-weight: 700; cursor: pointer;
+  }
+  button.secondary { background: #21262d; border: 1px solid #30363d; }
+  button:hover { filter: brightness(1.12); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .stats { margin-top: 12px; color: #8b949e; font-size: 13px; }
+  .error { color: #ff7b72; white-space: pre-wrap; }
+  .success { color: #3fb950; }
+  pre {
+    margin: 0; min-height: 260px; white-space: pre-wrap;
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: 10px; padding: 15px;
+    font: 15px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .hint { color: #8b949e; font-size: 12px; margin-top: 7px; }
+  @media(max-width: 800px) { .grid { grid-template-columns: 1fr; } .full { grid-column: auto; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>IPO GMP Formatter</h1>
+  <div class="sub">Paste your IPO JSON → keep UPCOMING / OPEN / CLOSED / ALLOTTED → output SYMBOL, GMP.</div>
+
+  <div class="grid">
+    <div class="card">
+      <label for="json">IPO JSON</label>
+      <textarea id="json" placeholder='Paste JSON here, e.g. {"data":[{"symbol":"ADROITIND","stage":"OPEN","gmp":37}]}'></textarea>
+      <div class="hint">Accepts {"data":[...]} or a direct JSON array.</div>
+    </div>
+
+    <div class="card small">
+      <label for="known">Known symbols</label>
+      <textarea id="known" placeholder="One symbol per line"></textarea>
+      <div class="hint">Paste the symbols accepted by your bulk GMP system. Unknown symbols are automatically removed.</div>
+    </div>
+
+    <div class="card full">
+      <label>Stages to include</label>
+      <div class="controls">
+        <label><input type="checkbox" value="UPCOMING" checked> UPCOMING</label>
+        <label><input type="checkbox" value="OPEN" checked> OPEN</label>
+        <label><input type="checkbox" value="CLOSED" checked> CLOSED</label>
+        <label><input type="checkbox" value="ALLOTTED" checked> ALLOTTED</label>
+      </div>
+      <div class="actions">
+        <button onclick="formatGmp()">Generate</button>
+        <button class="secondary" onclick="copyOutput()">Copy output</button>
+        <button class="secondary" onclick="downloadOutput()">Download .txt</button>
+        <button class="secondary" onclick="clearAll()">Clear</button>
+      </div>
+      <div id="status" class="stats"></div>
+    </div>
+
+    <div class="card full">
+      <label>Output</label>
+      <pre id="output">Your formatted result will appear here.</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const DEFAULT_KNOWN = `GERMAN
+DUDANI
+RUNWALENTR
+ACEVECTOR
+SHREETNB
+HIMALAYAN
+BMISL
+ADROITIND
+ARMEE
+SWASTIKAIN
+ELEVATE
+COREIN
+MONEYVIEW
+AONESTEELS
+GREENASIA
+VARMORA
+ANAND
+AXIOMGAS`;
+
+document.getElementById("known").value = localStorage.getItem("ipoKnownSymbols") || DEFAULT_KNOWN;
+
+function getRows(json) {
+  let parsed = JSON.parse(json);
+  if (Array.isArray(parsed)) return parsed;
+  if (Array.isArray(parsed.data)) return parsed.data;
+  throw new Error('Could not find an IPO array. Expected {"data":[...]} or [...]');
+}
+
+function cleanSymbol(value) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function formatGmp() {
+  const status = document.getElementById("status");
+  const output = document.getElementById("output");
+  try {
+    const rows = getRows(document.getElementById("json").value.trim());
+    const knownText = document.getElementById("known").value;
+    const known = new Set(
+      knownText.split(/\r?\n/)
+        .map(cleanSymbol)
+        .filter(Boolean)
+    );
+
+    localStorage.setItem("ipoKnownSymbols", knownText);
+
+    const stages = new Set(
+      [...document.querySelectorAll('input[type="checkbox"]:checked')]
+        .map(x => x.value)
+    );
+
+    const unknown = [];
+    const result = [];
+
+    for (const row of rows) {
+      const symbol = cleanSymbol(row.symbol);
+      const stage = cleanSymbol(row.stage);
+
+      if (!symbol || !stages.has(stage)) continue;
+
+      if (known.size && !known.has(symbol)) {
+        unknown.push(symbol);
+        continue;
+      }
+
+      let gmp = row.gmp;
+      if (gmp === null || gmp === undefined || gmp === "") gmp = 0;
+
+      result.push(`${symbol}, ${gmp}`);
+    }
+
+    output.textContent = result.length ? result.join("\n") : "No matching records.";
+    status.innerHTML =
+      `<span class="success">${result.length} output rows</span>` +
+      (unknown.length ? ` · ${unknown.length} unknown symbols removed: ${[...new Set(unknown)].join(", ")}` : "");
+  } catch (e) {
+    output.textContent = "";
+    status.innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+async function copyOutput() {
+  const text = document.getElementById("output").textContent;
+  if (!text || text === "Your formatted result will appear here.") return;
+  await navigator.clipboard.writeText(text);
+  document.getElementById("status").innerHTML = '<span class="success">Copied to clipboard.</span>';
+}
+
+function downloadOutput() {
+  const text = document.getElementById("output").textContent;
+  if (!text || text === "Your formatted result will appear here.") return;
+  const blob = new Blob([text], {type: "text/plain"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "bulk-gmp.txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function clearAll() {
+  document.getElementById("json").value = "";
+  document.getElementById("output").textContent = "Your formatted result will appear here.";
+  document.getElementById("status").textContent = "";
+}
+</script>
+</body>
+</html>
